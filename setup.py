@@ -30,7 +30,6 @@ setup(
     },
     packages=find_packages(include=['idf_drivers_gdb', 'idf_drivers_gdb.*']),
     package_data={'idf_drivers_gdb': ['py.typed']},
-    install_requires=['term-image'],
     python_requires='>=3.10',
     keywords=['python', 'espressif'],
     classifiers=[
