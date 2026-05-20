@@ -3,7 +3,7 @@
 
 """GDB utilities for debugging ESP-IDF drivers."""
 
-__version__ = '0.1.1'
+__version__ = '0.2.0'
 
 try:
     from .lcd import FramebufferDisplayCommand

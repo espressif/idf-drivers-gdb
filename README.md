@@ -20,17 +20,14 @@ registers the commands automatically.
 ## framebuffer_display
 
 `framebuffer_display` reads LCD framebuffer memory from the target, converts the
-pixel data, writes a `.ppm` file, and can render the image directly in the host
-terminal.
+pixel data, writes an image file, and can open it with the host system image viewer.
 
 ### Prerequisites
 
-Use a terminal that can display terminal images, such as Kitty, WezTerm, or
-iTerm2 with image protocol support.
+Use a host environment with a default image viewer.
 
-The package depends on `term-image` for host-side image rendering. If terminal
-rendering is not available, the command still writes a `.ppm` file that can be
-opened manually.
+PNG output is implemented with the Python standard library. If the image viewer
+cannot be opened automatically, the command still writes the image file and prints its path.
 
 ### Command Syntax
 
@@ -68,9 +65,10 @@ or
 - `--stride` / `-s`: Bytes per framebuffer row in memory.
   If omitted, it defaults to `width * bytes_per_pixel`.
 - `--crop` / `-c`: Crop region in full-frame coordinates: `x,y,w,h`.
-- `--output` / `-o`: Output image path (`.ppm`).
-  Default is `framebuffer_display.ppm` in the system temporary directory.
-- `--no-show` / `-n`: Export only. Do not render in terminal.
+- `--output` / `-o`: Output image path.
+  Default is `framebuffer_display.png` in the system temporary directory.
+  Use a `.ppm` suffix to write raw PPM output instead of PNG.
+- `--no-show` / `-n`: Export only. Do not open the image viewer.
 
 ### RGB Panel Example
 
@@ -87,6 +85,5 @@ or
   the GDB session.
 - `No symbol "<name>" in current context`:
   Use `info args` / `info locals` to verify symbol visibility.
-- Terminal prints raw image protocol text instead of image:
-  Use a compatible terminal or pass `--no-show` and open the generated `.ppm`
-  file manually.
+- Image viewer does not open:
+  Open the printed image path manually, or pass `--no-show` to export only.

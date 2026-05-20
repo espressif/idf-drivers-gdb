@@ -6,10 +6,15 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import os
+import platform
 import shlex
+import struct
 import subprocess
 import tempfile
+import zlib
+from pathlib import Path
 from typing import NoReturn
 
 import gdb  # type: ignore[import-not-found]
@@ -112,40 +117,54 @@ def _write_ppm(path: str, width: int, height: int, rgb_data: bytes) -> None:
         f.write(rgb_data)
 
 
-def _show_image(path: str) -> None:
-    # Avoid GDB pager interrupting image text rendering.
-    original_pagination = gdb.parameter('pagination')
-    original_height = gdb.parameter('height')
-    gdb.execute('set pagination off', to_string=True)
-    gdb.execute('set height 0', to_string=True)
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    payload = chunk_type + data
+    crc = binascii.crc32(payload) & 0xFFFFFFFF
+    return struct.pack('>I', len(data)) + payload + struct.pack('>I', crc)
+
+
+def _write_png(path: str, width: int, height: int, rgb_data: bytes) -> None:
+    row_bytes = width * 3
+    scanlines = bytearray((row_bytes + 1) * height)
+    for y in range(height):
+        source_offset = y * row_bytes
+        target_offset = y * (row_bytes + 1)
+        scanlines[target_offset] = 0
+        scanline_start = target_offset + 1
+        scanlines[scanline_start : scanline_start + row_bytes] = rgb_data[
+            source_offset : source_offset + row_bytes
+        ]
+
+    png_data = (
+        b'\x89PNG\r\n\x1a\n'
+        + _png_chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b'IDAT', zlib.compress(scanlines))
+        + _png_chunk(b'IEND', b'')
+    )
+
+    with open(path, 'wb') as f:
+        f.write(png_data)
+
+
+def _write_image(path: str, width: int, height: int, rgb_data: bytes) -> None:
+    if path.lower().endswith('.ppm'):
+        _write_ppm(path, width, height, rgb_data)
+        return
+
+    _write_png(path, width, height, rgb_data)
+
+
+def _open_image(path: str) -> None:
+    system = platform.system()
     try:
-        try:
-            subprocess.run(['term-image', path], check=True)
-            return
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
-
-        try:
-            # Fallback to term-image Python API.
-            from term_image.image import from_file
-
-            print(from_file(path))
-            return
-        except Exception:
-            pass
-
-        # Some installations expose a "timg" command.
-        try:
-            subprocess.run(['timg', path], check=True)
-            return
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
-
-        gdb.write(f'framebuffer_display: image saved but no terminal image viewer was found.\nOpen manually: {path}\n')
-    finally:
-        pagination = 'on' if original_pagination else 'off'
-        gdb.execute(f'set pagination {pagination}', to_string=True)
-        gdb.execute(f'set height {original_height}', to_string=True)
+        if system == 'Darwin':
+            subprocess.run(['open', '--', path], check=True)
+        elif system == 'Windows':
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.run(['xdg-open', Path(path).resolve().as_uri()], check=True)
+    except (AttributeError, FileNotFoundError, OSError, subprocess.CalledProcessError) as err:
+        gdb.write(f'framebuffer_display: image saved, but opening it failed: {err}\nOpen manually: {path}\n')
 
 
 def _read_memory(address: int, size: int) -> bytes:
@@ -277,7 +296,7 @@ def _require_str(opts: dict[str, OptionValue], key: str) -> str:
 
 
 class FramebufferDisplayCommand(gdb.Command):
-    """Dump framebuffer memory and display it in terminal.
+    """Dump framebuffer memory and open it with the system image viewer.
 
     Usage:
       framebuffer_display <gdb-expression/address> <width> <height> <format>
@@ -292,8 +311,8 @@ class FramebufferDisplayCommand(gdb.Command):
     Optional arguments:
       -s, --stride <bytes>         Bytes per row. Default: width * bytes_per_pixel.
       -c, --crop <x,y,w,h>         Dump only a rectangular region.
-      -o, --output <path>          Output PPM path.
-      -n, --no-show                Export only, do not render in terminal.
+      -o, --output <path>          Output image path. Default: a PNG file in the system temporary directory.
+      -n, --no-show                Export only, do not open the image viewer.
       -h, --height <pixels>        Long-form syntax option.
       -w, --width <pixels>         Long-form syntax option.
       -f, --format <format>        Long-form syntax option.
@@ -408,13 +427,13 @@ class FramebufferDisplayCommand(gdb.Command):
         if 'output' in opts:
             output_path = _require_str(opts, 'output')
         else:
-            output_path = os.path.join(tempfile.gettempdir(), 'framebuffer_display.ppm')
+            output_path = os.path.join(tempfile.gettempdir(), 'framebuffer_display.png')
 
         addr = _require_int(opts, 'addr') + crop_y * stride
         raw = _read_memory(addr, read_size)
         rgb_data = _to_rgb_bytes(raw, crop_w, crop_h, stride, pix_fmt, x_offset=crop_x)
-        _write_ppm(output_path, crop_w, crop_h, rgb_data)
+        _write_image(output_path, crop_w, crop_h, rgb_data)
         gdb.write(f'framebuffer_display: wrote {output_path}\n')
 
         if bool(opts.get('show', True)):
-            _show_image(output_path)
+            _open_image(output_path)
